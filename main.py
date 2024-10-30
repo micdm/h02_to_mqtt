@@ -1,12 +1,10 @@
-import os
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from datetime import datetime, UTC
-from functools import cache
 import logging
-from typing import Any, Annotated, Literal
+import os
+import socketserver
+from datetime import datetime
+from functools import cache
+from typing import Any, Literal
 
-from fastapi import FastAPI, Depends
 from paho.mqtt.client import MQTTv5, Client
 from paho.mqtt.enums import CallbackAPIVersion
 from pydantic import BaseModel, Field, field_serializer
@@ -82,32 +80,30 @@ class MQTTPayload(BaseModel):
         return int(timestamp.timestamp())
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    mqtt_client = setup_mqtt_client()
-    config: Config = Config.model_validate(os.environ)
-    mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
-    mqtt_client.connect(config.MQTTHost, config.MQTTPort, keepalive=60)
-    mqtt_client.loop_start()
-    yield
-    mqtt_client.loop_stop()
+# logger.info("Request received: %s", body)
+# payload = MQTTPayload(
+#     lat=body.latitude,
+#     lon=body.longitude,
+#     vel=body.velocity,
+#     tst=body.timestamp,
+#     created_at=datetime.now(UTC),
+# )
+# mqtt_client.publish("owntracks/car/gps", payload.model_dump_json())
+# return "OK"
 
 
-app = FastAPI(lifespan=lifespan)
+class TCPHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        data = self.request.recv(1024).strip()
+        print(data)
 
 
-@app.post("/")
-def index(
-    body: RequestBody,
-    mqtt_client: Annotated[Client, Depends(setup_mqtt_client)],
-):
-    logger.info("Request received: %s", body)
-    payload = MQTTPayload(
-        lat=body.latitude,
-        lon=body.longitude,
-        vel=body.velocity,
-        tst=body.timestamp,
-        created_at=datetime.now(UTC),
-    )
-    mqtt_client.publish("owntracks/car/gps", payload.model_dump_json())
-    return "OK"
+if __name__ == "__main__":
+    with socketserver.TCPServer(("0.0.0.0", "11220"), TCPHandler) as server:  # type: ignore[arg-type]
+        mqtt_client = setup_mqtt_client()
+        config: Config = Config.model_validate(os.environ)
+        mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
+        mqtt_client.connect(config.MQTTHost, config.MQTTPort, keepalive=60)
+        mqtt_client.loop_start()
+        server.serve_forever()
+        mqtt_client.loop_stop()
