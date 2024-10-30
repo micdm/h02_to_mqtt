@@ -10,5 +10,3 @@ wheels/
 .venv
 
 .idea
-cert.pem
-key.pem
