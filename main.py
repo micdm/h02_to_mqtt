@@ -99,7 +99,7 @@ class TCPHandler(socketserver.BaseRequestHandler):
 
 
 if __name__ == "__main__":
-    with socketserver.TCPServer(("0.0.0.0", "11220"), TCPHandler) as server:  # type: ignore[arg-type]
+    with socketserver.TCPServer(("0.0.0.0", 11220), TCPHandler) as server:
         mqtt_client = setup_mqtt_client()
         config: Config = Config.model_validate(os.environ)
         mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
