@@ -1,5 +1,4 @@
 import logging
-import os
 import socketserver
 from datetime import datetime
 from functools import cache
@@ -93,17 +92,27 @@ class MQTTPayload(BaseModel):
 
 
 class TCPHandler(socketserver.BaseRequestHandler):
+    data = b""
+
     def handle(self):
-        data = self.request.recv(1024).strip()
-        print(data)
+        while True:
+            data = self.request.recv(100)
+            if not data:
+                return
+            self.data += data
+            left = self.data.find(b"*")
+            right = self.data.find(b"#")
+            if left != -1 and right != -1 and right > left:
+                print(self.data[left : right + 1])
+                self.data = self.data[right + 1 :]
 
 
 if __name__ == "__main__":
     with socketserver.TCPServer(("0.0.0.0", 11220), TCPHandler) as server:
         mqtt_client = setup_mqtt_client()
-        config: Config = Config.model_validate(os.environ)
-        mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
-        mqtt_client.connect(config.MQTTHost, config.MQTTPort, keepalive=60)
-        mqtt_client.loop_start()
+        # config: Config = Config.model_validate(os.environ)
+        # mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
+        # mqtt_client.connect(config.MQTTHost, config.MQTTPort, keepalive=60)
+        # mqtt_client.loop_start()
         server.serve_forever()
-        mqtt_client.loop_stop()
+        # mqtt_client.loop_stop()
