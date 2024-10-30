@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, UTC
 from functools import cache
+import logging
 from typing import Any, Annotated, Literal
 
 import uvicorn
@@ -12,6 +13,9 @@ from paho.mqtt.enums import CallbackAPIVersion
 from pydantic import BaseModel, Field, field_serializer
 from pydantic.functional_validators import model_validator
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 class Config(BaseModel):
     MQTTHost: str = Field(alias="MQTT_HOST")
@@ -20,12 +24,23 @@ class Config(BaseModel):
     MQTTPassword: str = Field(alias="MQTT_PASSWORD")
 
 
+def _on_mqtt_connect(*args) -> None:
+    logger.info("Connected to MQTT")
+
+
+def _on_mqtt_connect_fail(*args) -> None:
+    logger.info("Cannot connect to MQTT")
+
+
 @cache
 def setup_mqtt_client() -> Client:
-    return Client(
+    client = Client(
         CallbackAPIVersion.VERSION2,
         protocol=MQTTv5,
     )
+    client.on_connect = _on_mqtt_connect
+    client.on_connect_fail = _on_mqtt_connect_fail
+    return client
 
 
 class RequestBody(BaseModel):
@@ -79,7 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     mqtt_client.loop_stop()
 
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 
 @app.post("/")
@@ -87,6 +102,7 @@ def index(
     body: RequestBody,
     mqtt_client: Annotated[Client, Depends(setup_mqtt_client)],
 ):
+    logger.info("Request received: %s", body)
     payload = MQTTPayload(
         lat=body.latitude,
         lon=body.longitude,
