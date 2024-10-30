@@ -5,6 +5,7 @@ from datetime import datetime, UTC
 from functools import cache
 from typing import Any, Annotated, Literal
 
+import uvicorn
 from fastapi import FastAPI, Depends
 from paho.mqtt.client import MQTTv5, Client
 from paho.mqtt.enums import CallbackAPIVersion
@@ -95,3 +96,13 @@ def index(
     )
     mqtt_client.publish("owntracks/car/gps", payload.model_dump_json())
     return "OK"
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        ssl_certfile="./cert.pem",
+        ssl_keyfile="./key.pem",
+    )
