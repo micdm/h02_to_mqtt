@@ -1,7 +1,10 @@
 import logging
+import os
 import socketserver
-from datetime import datetime
+from collections.abc import Generator
+from datetime import datetime, UTC
 from functools import cache
+from socket import socket
 from typing import Any, Literal
 
 from paho.mqtt.client import MQTTv5, Client
@@ -20,26 +23,63 @@ class Config(BaseModel):
     MQTTPassword: str = Field(alias="MQTT_PASSWORD")
 
 
-def _on_mqtt_connect(*args) -> None:
-    logger.info("Connected to MQTT")
-
-
-def _on_mqtt_connect_fail(*args) -> None:
-    logger.info("Cannot connect to MQTT")
-
-
 @cache
 def setup_mqtt_client() -> Client:
     client = Client(
         CallbackAPIVersion.VERSION2,
         protocol=MQTTv5,
     )
-    client.on_connect = _on_mqtt_connect
-    client.on_connect_fail = _on_mqtt_connect_fail
+    client.on_connect = lambda *args: logger.info("Connected to MQTT")
+    client.on_connect_fail = lambda *args: logger.info("Cannot connect to MQTT")
     return client
 
 
-class RequestBody(BaseModel):
+class TCPHandler(socketserver.BaseRequestHandler):
+    def setup(self) -> None:
+        logger.info(
+            "New connection: connection=%s, address=%s", self, self.client_address
+        )
+
+    def finish(self) -> None:
+        logger.info("Connection closed: connection=%s", self)
+
+    def handle(self) -> None:
+        try:
+            for payload in handle_request(self.request):
+                process_payload(payload)
+        except BadRequest as e:
+            logger.info("Bad request: e=%s", e)
+
+
+class BadRequest(Exception):
+    pass
+
+
+def handle_request(request: socket) -> Generator[str, None, None]:
+    buffer = ""
+    while chunk := request.recv(4096):
+        try:
+            buffer += chunk.decode()
+        except UnicodeDecodeError as e:
+            raise BadRequest("cannot read chunk") from e
+        for message, end in process_buffer(buffer):
+            yield message
+            buffer = buffer[end + 1 :]
+
+
+def process_buffer(buffer: str) -> Generator[tuple[str, int], None, None]:
+    cursor = 0
+    while cursor < len(buffer):
+        if buffer[cursor] != "*":
+            raise BadRequest(f"unexpected data: buffer={buffer[cursor : cursor + 20]}")
+        end = buffer.find("#", cursor)
+        if end == -1:
+            return
+        yield buffer[cursor + 1 : end], end
+        cursor = end + 1
+
+
+class H02Payload(BaseModel):
     device_id: str
     latitude: float
     longitude: float
@@ -48,11 +88,11 @@ class RequestBody(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def split_input(cls, data: bytes) -> dict[str, Any]:
+    def split_input(cls, data: str) -> dict[str, Any]:
         def fix_coord(value: str) -> float:
             return round(int(value[:2]) + float(value[2:]) / 60, 6)
 
-        parts = data.decode().split(",")
+        parts = data.split(",")
         return {
             "device_id": parts[1],
             "latitude": fix_coord(parts[5]),
@@ -79,40 +119,25 @@ class MQTTPayload(BaseModel):
         return int(timestamp.timestamp())
 
 
-# logger.info("Request received: %s", body)
-# payload = MQTTPayload(
-#     lat=body.latitude,
-#     lon=body.longitude,
-#     vel=body.velocity,
-#     tst=body.timestamp,
-#     created_at=datetime.now(UTC),
-# )
-# mqtt_client.publish("owntracks/car/gps", payload.model_dump_json())
-# return "OK"
-
-
-class TCPHandler(socketserver.BaseRequestHandler):
-    data = b""
-
-    def handle(self):
-        while True:
-            data = self.request.recv(100)
-            if not data:
-                return
-            self.data += data
-            left = self.data.find(b"*")
-            right = self.data.find(b"#")
-            if left != -1 and right != -1 and right > left:
-                print(self.data[left : right + 1])
-                self.data = self.data[right + 1 :]
+def process_payload(value: str) -> None:
+    h02_payload = H02Payload.model_validate(value)
+    logger.info("H02 message received: payload=%s", h02_payload)
+    mqtt_payload = MQTTPayload(
+        lat=h02_payload.latitude,
+        lon=h02_payload.longitude,
+        vel=h02_payload.velocity,
+        tst=h02_payload.timestamp,
+        created_at=datetime.now(UTC),
+    )
+    mqtt_client.publish("owntracks/car/gps", mqtt_payload.model_dump_json())
 
 
 if __name__ == "__main__":
     with socketserver.TCPServer(("0.0.0.0", 11220), TCPHandler) as server:
         mqtt_client = setup_mqtt_client()
-        # config: Config = Config.model_validate(os.environ)
-        # mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
-        # mqtt_client.connect(config.MQTTHost, config.MQTTPort, keepalive=60)
-        # mqtt_client.loop_start()
+        config: Config = Config.model_validate(os.environ)
+        mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
+        mqtt_client.connect(config.MQTTHost, config.MQTTPort)
+        mqtt_client.loop_start()
         server.serve_forever()
-        # mqtt_client.loop_stop()
+        mqtt_client.loop_stop()
