@@ -20,7 +20,7 @@ class Config(BaseModel):
     MQTTPort: int = Field(alias="MQTT_PORT")
     MQTTUser: str = Field(alias="MQTT_USER")
     MQTTPassword: str = Field(alias="MQTT_PASSWORD")
-    log_level: Literal["DEBUG", "INFO"] = Field(alias="LOG_LEVEL")
+    log_level: Literal["DEBUG", "INFO"] = Field("INFO", alias="LOG_LEVEL")
 
 
 @cache
@@ -55,28 +55,28 @@ class BadRequest(Exception):
     pass
 
 
-def handle_request(request: socket) -> Generator[str, None, None]:
-    buffer = ""
+def handle_request(request: socket) -> Generator[bytes, None, None]:
+    buffer = b""
     while chunk := request.recv(4096):
         logger.debug("Chunk: %s", chunk)
-        try:
-            buffer += chunk.decode()
-        except UnicodeDecodeError as e:
-            raise BadRequest("cannot read chunk") from e
+        buffer += chunk
         for message, end in process_buffer(buffer):
             yield message
             buffer = buffer[end + 1 :]
+        if len(buffer) > 1000:
+            return
 
 
-def process_buffer(buffer: str) -> Generator[tuple[str, int], None, None]:
+def process_buffer(buffer: bytes) -> Generator[tuple[bytes, int], None, None]:
     cursor = 0
     while cursor < len(buffer):
-        if buffer[cursor] != "*":
-            raise BadRequest(f"unexpected data: buffer={buffer[cursor : cursor + 20]}")
-        end = buffer.find("#", cursor)
+        begin = buffer.find(b"*", cursor)
+        if begin == -1:
+            return
+        end = buffer.find(b"#", begin)
         if end == -1:
             return
-        yield buffer[cursor + 1 : end], end
+        yield buffer[begin + 1 : end], end
         cursor = end + 1
 
 
@@ -89,11 +89,11 @@ class H02Payload(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def split_input(cls, data: str) -> dict[str, Any]:
+    def split_input(cls, data: bytes) -> dict[str, Any]:
         def fix_coord(value: str) -> float:
             return round(int(value[:2]) + float(value[2:]) / 60, 6)
 
-        parts = data.split(",")
+        parts = data.decode().split(",")
         return {
             "device_id": parts[1],
             "latitude": fix_coord(parts[5]),
@@ -120,7 +120,7 @@ class MQTTPayload(BaseModel):
         return int(timestamp.timestamp())
 
 
-def process_payload(value: str) -> None:
+def process_payload(value: bytes) -> None:
     h02_payload = H02Payload.model_validate(value)
     logger.info("H02 message received: payload=%s", h02_payload)
     mqtt_payload = MQTTPayload(

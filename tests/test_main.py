@@ -10,12 +10,12 @@ from main import handle_request
     "data, expected",
     (
         (b"*fir", ()),
-        (b"*first#*second", ("first",)),
-        (b"*first#*second#", ("first", "second")),
+        (b"*first#*second", (b"first",)),
+        (b"*first#*second#", (b"first", b"second")),
     ),
 )
 def test_handle_request(
-    mocker: MockerFixture, data: bytes, expected: Sequence[str]
+    mocker: MockerFixture, data: bytes, expected: Sequence[bytes]
 ) -> None:
     request = mocker.Mock(recv=mocker.Mock(side_effect=(data, b"")))
     result = handle_request(request)
