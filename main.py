@@ -46,7 +46,7 @@ class TCPHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         result = handle_request(self.request)
         if result:
-            process_payload(result)
+            process_h02_message(result)
 
 
 def handle_request(request: socket) -> bytes | None:
@@ -54,16 +54,16 @@ def handle_request(request: socket) -> bytes | None:
     while chunk := request.recv(4096):
         logger.debug("Chunk: %s", chunk)
         buffer += chunk
-        result = process_buffer(buffer)
-        if result:
-            return result
+        message = search_for_message(buffer)
+        if message:
+            return message
         if len(buffer) > 10000:
             logger.info("Buffer overflow")
             break
     return None
 
 
-def process_buffer(buffer: bytes) -> bytes | None:
+def search_for_message(buffer: bytes) -> bytes | None:
     begin = buffer.find(b"*")
     if begin == -1:
         return None
@@ -73,7 +73,7 @@ def process_buffer(buffer: bytes) -> bytes | None:
     return buffer[begin + 1 : end]  # Без звёздочки и решётки
 
 
-class H02Payload(BaseModel):
+class H02Message(BaseModel):
     device_id: str
     latitude: float
     longitude: float
@@ -96,7 +96,7 @@ class H02Payload(BaseModel):
         }
 
 
-class MQTTPayload(BaseModel):
+class MQTTMessage(BaseModel):
     _type: Literal["location"] = "location"
     lat: float
     lon: float
@@ -113,17 +113,18 @@ class MQTTPayload(BaseModel):
         return int(timestamp.timestamp())
 
 
-def process_payload(value: bytes) -> None:
-    h02_payload = H02Payload.model_validate(value)
-    logger.info("H02 message received: payload=%s", h02_payload)
-    mqtt_payload = MQTTPayload(
-        lat=h02_payload.latitude,
-        lon=h02_payload.longitude,
-        vel=h02_payload.velocity,
-        tst=h02_payload.timestamp,
+def process_h02_message(raw: bytes) -> None:
+    h02_msg = H02Message.model_validate(raw)
+    logger.info("H02 message received: msg=%s", h02_msg)
+    mqtt_msg = MQTTMessage(
+        lat=h02_msg.latitude,
+        lon=h02_msg.longitude,
+        vel=h02_msg.velocity,
+        tst=h02_msg.timestamp,
         created_at=datetime.now(UTC),
     )
-    mqtt_client.publish("owntracks/car/gps", mqtt_payload.model_dump_json())
+    mqtt_client.publish("owntracks/car/gps", mqtt_msg.model_dump_json())
+    logger.info("MQTT message published: msg=%s", mqtt_msg)
 
 
 if __name__ == "__main__":
