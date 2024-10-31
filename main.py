@@ -1,7 +1,6 @@
 import logging
 import os
 import socketserver
-from collections.abc import Generator
 from datetime import datetime, UTC
 from functools import cache
 from socket import socket
@@ -35,49 +34,43 @@ def setup_mqtt_client() -> Client:
 
 
 class TCPHandler(socketserver.BaseRequestHandler):
+    def __str__(self) -> str:
+        return f"id={id(self)}, client={self.client_address}"
+
     def setup(self) -> None:
-        logger.info(
-            "New connection: connection=%s, address=%s", self, self.client_address
-        )
+        logger.info("New connection: connection=%s", self)
 
     def finish(self) -> None:
         logger.info("Connection closed: connection=%s", self)
 
     def handle(self) -> None:
-        try:
-            for payload in handle_request(self.request):
-                process_payload(payload)
-        except BadRequest as e:
-            logger.info("Bad request: e=%s", e)
+        result = handle_request(self.request)
+        if result:
+            process_payload(result)
 
 
-class BadRequest(Exception):
-    pass
-
-
-def handle_request(request: socket) -> Generator[bytes, None, None]:
+def handle_request(request: socket) -> bytes | None:
     buffer = b""
     while chunk := request.recv(4096):
         logger.debug("Chunk: %s", chunk)
         buffer += chunk
-        for message, end in process_buffer(buffer):
-            yield message
-            buffer = buffer[end + 1 :]
-        if len(buffer) > 1000:
-            return
+        result = process_buffer(buffer)
+        if result:
+            return result
+        if len(buffer) > 10000:
+            logger.info("Buffer overflow")
+            break
+    return None
 
 
-def process_buffer(buffer: bytes) -> Generator[tuple[bytes, int], None, None]:
-    cursor = 0
-    while cursor < len(buffer):
-        begin = buffer.find(b"*", cursor)
-        if begin == -1:
-            return
-        end = buffer.find(b"#", begin)
-        if end == -1:
-            return
-        yield buffer[begin + 1 : end], end
-        cursor = end + 1
+def process_buffer(buffer: bytes) -> bytes | None:
+    begin = buffer.find(b"*")
+    if begin == -1:
+        return None
+    end = buffer.find(b"#", begin)
+    if end == -1:
+        return None
+    return buffer[begin + 1 : end]  # Без звёздочки и решётки
 
 
 class H02Payload(BaseModel):
