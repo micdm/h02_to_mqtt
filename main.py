@@ -12,7 +12,6 @@ from paho.mqtt.enums import CallbackAPIVersion
 from pydantic import BaseModel, Field, field_serializer
 from pydantic.functional_validators import model_validator
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -21,6 +20,7 @@ class Config(BaseModel):
     MQTTPort: int = Field(alias="MQTT_PORT")
     MQTTUser: str = Field(alias="MQTT_USER")
     MQTTPassword: str = Field(alias="MQTT_PASSWORD")
+    log_level: Literal["DEBUG", "INFO"] = Field(alias="LOG_LEVEL")
 
 
 @cache
@@ -58,6 +58,7 @@ class BadRequest(Exception):
 def handle_request(request: socket) -> Generator[str, None, None]:
     buffer = ""
     while chunk := request.recv(4096):
+        logger.debug("Chunk: %s", chunk)
         try:
             buffer += chunk.decode()
         except UnicodeDecodeError as e:
@@ -136,6 +137,9 @@ if __name__ == "__main__":
     with socketserver.TCPServer(("0.0.0.0", 11220), TCPHandler) as server:
         mqtt_client = setup_mqtt_client()
         config: Config = Config.model_validate(os.environ)
+        logging.basicConfig(
+            level=config.log_level, format="{asctime} | {message}", style="{"
+        )
         mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
         mqtt_client.connect(config.MQTTHost, config.MQTTPort)
         mqtt_client.loop_start()
