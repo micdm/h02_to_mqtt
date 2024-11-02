@@ -125,7 +125,7 @@ def process_h02_message(raw: bytes) -> None:
         created_at=datetime.now(UTC),
         tid=h02_msg.device_id,
     )
-    mqtt_client.publish("owntracks/car/gps", mqtt_msg.model_dump_json())
+    mqtt_client.publish("owntracks/car/gps", mqtt_msg.model_dump_json(by_alias=True))
     logger.info("MQTT message published: msg=%s", mqtt_msg)
 
 
