@@ -6,8 +6,7 @@ from functools import cache
 from socket import socket
 from typing import Any, Literal
 
-from paho.mqtt.client import MQTTv5, Client
-from paho.mqtt.enums import CallbackAPIVersion
+import requests
 from pydantic import BaseModel, Field, field_serializer
 from pydantic.functional_validators import model_validator
 
@@ -15,22 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 class Config(BaseModel):
-    MQTTHost: str = Field(alias="MQTT_HOST")
-    MQTTPort: int = Field(alias="MQTT_PORT")
-    MQTTUser: str = Field(alias="MQTT_USER")
-    MQTTPassword: str = Field(alias="MQTT_PASSWORD")
+    webhook_url: str = Field(alias="WEBHOOK_URL")
     log_level: Literal["DEBUG", "INFO"] = Field("INFO", alias="LOG_LEVEL")
 
 
 @cache
-def setup_mqtt_client() -> Client:
-    client = Client(
-        CallbackAPIVersion.VERSION2,
-        protocol=MQTTv5,
-    )
-    client.on_connect = lambda *args: logger.info("Connected to MQTT")
-    client.on_connect_fail = lambda *args: logger.info("Cannot connect to MQTT")
-    return client
+def init_config() -> Config:
+    return Config.model_validate(os.environ)
 
 
 class TCPHandler(socketserver.BaseRequestHandler):
@@ -96,7 +86,7 @@ class H02Message(BaseModel):
         }
 
 
-class MQTTMessage(BaseModel):
+class APIMessage(BaseModel):
     type: str = Field(..., serialization_alias="_type")
     lat: float
     lon: float
@@ -116,7 +106,7 @@ class MQTTMessage(BaseModel):
 def process_h02_message(raw: bytes) -> None:
     h02_msg = H02Message.model_validate(raw)
     logger.info("H02 message received: msg=%s", h02_msg)
-    mqtt_msg = MQTTMessage(
+    api_msg = APIMessage(
         type="location",
         lat=h02_msg.latitude,
         lon=h02_msg.longitude,
@@ -125,19 +115,26 @@ def process_h02_message(raw: bytes) -> None:
         created_at=datetime.now(UTC),
         tid=h02_msg.device_id,
     )
-    mqtt_client.publish("owntracks/car/gps", mqtt_msg.model_dump_json(by_alias=True))
-    logger.info("MQTT message published: msg=%s", mqtt_msg)
+    config = init_config()
+    requests.post(
+        config.webhook_url,
+        json=api_msg.model_dump(by_alias=True),
+        headers={
+            "X-Limit-U": "car",
+            "X-Limit-D": "st-901",
+        },
+    )
+    logger.info("API request sent: msg=%s", api_msg)
 
 
-if __name__ == "__main__":
+def run() -> None:
     with socketserver.TCPServer(("0.0.0.0", 11220), TCPHandler) as server:
-        mqtt_client = setup_mqtt_client()
-        config: Config = Config.model_validate(os.environ)
+        config = init_config()
         logging.basicConfig(
             level=config.log_level, format="{asctime} | {message}", style="{"
         )
-        mqtt_client.username_pw_set(config.MQTTUser, config.MQTTPassword)
-        mqtt_client.connect(config.MQTTHost, config.MQTTPort)
-        mqtt_client.loop_start()
         server.serve_forever()
-        mqtt_client.loop_stop()
+
+
+if __name__ == "__main__":
+    run()
