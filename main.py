@@ -97,18 +97,18 @@ class H02Message(BaseModel):
 
 
 class MQTTMessage(BaseModel):
-    _type: Literal["location"] = "location"
+    type: str = Field(..., serialization_alias="_type")
     lat: float
     lon: float
-    acc: Literal[3] = 3
     vel: float
     tst: datetime
     created_at: datetime
+    tid: str
+    acc: Literal[3] = 3
     conn: Literal["m"] = "m"
-    tid: Literal["CA"] = "CA"
     t: Literal["I"] = "I"
 
-    @field_serializer("tst")
+    @field_serializer("tst", "created_at")
     def serialize_timestamp(self, timestamp: datetime) -> int:
         return int(timestamp.timestamp())
 
@@ -117,11 +117,13 @@ def process_h02_message(raw: bytes) -> None:
     h02_msg = H02Message.model_validate(raw)
     logger.info("H02 message received: msg=%s", h02_msg)
     mqtt_msg = MQTTMessage(
+        type="location",
         lat=h02_msg.latitude,
         lon=h02_msg.longitude,
         vel=h02_msg.velocity,
         tst=h02_msg.timestamp,
         created_at=datetime.now(UTC),
+        tid=h02_msg.device_id,
     )
     mqtt_client.publish("owntracks/car/gps", mqtt_msg.model_dump_json())
     logger.info("MQTT message published: msg=%s", mqtt_msg)
