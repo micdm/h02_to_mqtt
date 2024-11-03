@@ -29,12 +29,17 @@ class TCPHandler(socketserver.BaseRequestHandler):
 
     def setup(self) -> None:
         logger.info("New connection: connection=%s", self)
+        self.request.settimeout(10)
 
     def finish(self) -> None:
         logger.info("Connection closed: connection=%s", self)
 
     def handle(self) -> None:
-        result = handle_request(self.request)
+        try:
+            result = handle_request(self.request)
+        except TimeoutError:
+            logger.info("Request timeout")
+            return
         if result:
             process_h02_message(result)
 
@@ -128,11 +133,12 @@ def process_h02_message(raw: bytes) -> None:
 
 
 def run() -> None:
+    config = init_config()
+    logging.basicConfig(
+        level=config.log_level, format="{asctime} | {message}", style="{"
+    )
+    logger.info("Starting")
     with socketserver.TCPServer(("0.0.0.0", 11220), TCPHandler) as server:
-        config = init_config()
-        logging.basicConfig(
-            level=config.log_level, format="{asctime} | {message}", style="{"
-        )
         server.serve_forever()
 
 
